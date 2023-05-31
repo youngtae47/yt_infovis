@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FHE Unit Operation Profiling.js</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      background: white;
+      overflow-y: scroll;
+    }
+
+    .container {
+      width: 1000px;
+      background: white;
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    #chart {
+      width: 900px;
+      height: 600px;
+    }
+    
+    #histogram {
+      width: 400px;
+      height: 100px;
+      margin-top: 20px;
+      margin-right: 20px;
+    }
+
+    #dotplot {
+      width: 600px;
+      height: 500px;
+      transform: translate(-17%, -10%);
+    }
+
+    .reset-button {
+      position: absolute;
+      top: 3%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div id="chart"></div>
+    <button id="resetButton" class="reset-button">Reset</button>
+    <div id="histogram"></div>
+    <div id="dotplot"></div>
+  </div>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-legend/2.25.6/d3-legend.min.js"></script>
+  <script src="https://unpkg.com/@popperjs/core@2"></script>
+  <script>
+    var svgWidth = 1000;
+    var svgHeight = 2000;
+    var chartAreaHeight = 300;
+    var chartAreaWidth = 900;
+    var chartAreaX = 50;
+    var chartAreaY = 50;
+    var svg = d3.select("#chart")
+      .append("svg")
+      .attr("width", svgWidth)
+      .attr("height", svgHeight);
+
+    d3.csv("https://raw.githubusercontent.com/youngtae47/yt_infovis/main/async_log.csv").then(function (data) {
+
+      var threadIDMap = new Map();
+
+      function getMappedThreadID(threadID) {
+        if (!threadIDMap.has(threadID)) {
+          threadIDMap.set(threadID, threadIDMap.size + 1);
+        }
+        return threadIDMap.get(threadID);
+      }
+
+      data.forEach(function (d) {
+        d.start_time = parseInt(d.start_time);
+        d.end_time = parseInt(d.end_time);
+      });
+
+      var addressCounts = {};
+
+      data.forEach(function (d) {
+        var address = d.address;
+        if (!addressCounts.hasOwnProperty(address)) {
+          addressCounts[address] = 0;
+        }
+        addressCounts[address]++;
+      });
+
+      var dotGraphData = Object.entries(addressCounts).map(function ([address, count]) {
+        return { address: address, count: count };
+      });
+
+      var dotGraphHeight = 500;
+      var dotGraphRadius = 5;
+      var dotcolorScale = d3.scaleSequential()
+        .domain([0, d3.max(dotGraphData, function(d) { return d.count; })])
+        .interpolator(d3.interpolateReds);
+
+      var dotGraphSvg = d3.select("#dotplot")
+        .append("svg")
+        .attr("width", svgWidth)
+        .attr("height", dotGraphHeight)
+        
+
+      var xScaleDotPlot = d3.scaleBand()
+        .domain(dotGraphData.map(function(d) { return d.address; }))
+        .range([0, chartAreaWidth])
+        .padding(0.2);
+
+      var yScaleDotPlot = d3.scaleLinear()
+        .domain([0, d3.max(dotGraphData, function(d) { return d.count + 10; })])
+        .range([chartAreaHeight, 0]);
+
+      var tooltip = d3.select("body")
+        .append("div")
+        .attr("class", "tooltip")
+        .style("opacity", 0);
+
+      dotGraphSvg.selectAll("circle")
+        .data(dotGraphData)
+        .enter()
+        .append("circle")
+        .attr("cx", function (d) { return xScaleDotPlot(d.address) + xScaleDotPlot.bandwidth() / 2; })
+        .attr("cy", function (d) { return yScaleDotPlot(d.count); })
+        .attr("r", dotGraphRadius)
+        .attr("fill", function(d) {
+          return dotcolorScale(d.count);
+        })
+        .on("mouseover", function (event, d) {
+
+          var hexAddress = "0x" + Number(d.address).toString(16).toUpperCase();
+          tooltip.transition()
+            .duration(200)
+            .style("opacity", .9);
+          tooltip.html("<b>Address:</b> " + hexAddress + "<br/>" + "<b>Count:</b> " + d.count)
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px")
+            .style("background-color", "white")
+            .style("border", "1px solid black")
+            .style("padding", "8px");
+        })
+        .on("mouseout", function (event, d) {
+          tooltip.transition()
+            .duration(500)
+            .style("opacity", 0);
+        });
+
+        var xAxis = d3.axisBottom(xScaleDotPlot)
+          .tickFormat("")
+          .tickSize(0);
+
+        dotGraphSvg.append("g")
+          .attr("class", "x-axis")
+          .attr("transform", "translate(0," + chartAreaHeight + ")")
+          .call(xAxis);
+
+        dotGraphSvg.append("g")
+          .attr("class", "y-axis")
+          .call(d3.axisLeft(yScaleDotPlot));
+
+        dotGraphSvg.append("text")
+          .attr("class", "x-label")
+          .attr("x", chartAreaWidth / 2)
+          .attr("y", chartAreaHeight + 40)
+          .style("font-family", "Arial")
+          .style("font-weight", "bold")
+          .style("text-anchor", "middle")
+          .text("Memory Address Frequency");
+
+      var xMin = d3.min(data, function (d) { return d.start_time; });
+      var xMax = d3.max(data, function (d) { return d.end_time; });
+      var xScale = d3.scaleLinear()
+        .domain([xMin, xMax])
+        .range([chartAreaX, chartAreaX + chartAreaWidth]);
+
+      var yScale = d3.scaleBand()
+        .domain(data.map(function (d) { return getMappedThreadID(d.thread_id); }))
+        .range([chartAreaY, chartAreaY + chartAreaHeight])
+        .padding(0.2);
+
+      var unitNames = data.map(function (d) { return d.unit_name; });
+
+      var colorScale = d3.scaleOrdinal()
+        .domain(unitNames)
+        .range(d3.schemeCategory10);
+
+      svg.selectAll("rect")
+        .data(data)
+        .enter()
+        .append("rect")
+        .attr("x", function (d) { return xScale(d.start_time); })
+        .attr("y", function (d) { return yScale(getMappedThreadID(d.thread_id)); })
+        .attr("width", function (d) { return xScale(d.end_time) - xScale(d.start_time); })
+        .attr("height", yScale.bandwidth())
+        .attr("fill", function (d) { return colorScale(d.unit_name); });
+
+      function drawLegend(data) {
+        var uniqueUnitNames = Array.from(new Set(data.map(function (d) { return d.unit_name; })));
+        var legend = svg.append("g")
+          .attr("class", "legend")
+          .attr("transform", "translate(700, 450)");
+        var legendItems = legend.selectAll("g")
+          .data(uniqueUnitNames)
+          .enter()
+          .append("g")
+          .attr("transform", function (d, i) {
+            return "translate(0," + (i * 20) + ")";
+          });
+        legendItems.append("rect")
+          .attr("x", 0)
+          .attr("y", 0)
+          .attr("width", 12)
+          .attr("height", 12)
+          .attr("fill", function (d) { return colorScale(d); })
+
+        legendItems.append("text")
+          .attr("x", 20)
+          .attr("y", 10)
+          .style("font-family", "Arial")
+          .style("font-weight", "bold")
+          .text(function (d) { return d; })
+          .on("click", function (event, d) {
+            var isActive = d3.select(this).classed("active");
+            if (isActive) {
+              svg.selectAll("rect").attr("opacity", 1);
+              d3.select("#histogram").selectAll("rect").attr("opacity", 1);
+              legendItems.selectAll("rect").attr("opacity", 1);
+
+              svg.selectAll("rect").filter(function (rectData) {
+                return rectData.unit_name != d;
+              }).attr("opacity", 1);
+              legendItems.selectAll("rect").filter(function (rectData) {
+                return rectData != d;
+              }).attr("opacity", 1);
+              d3.select("#histogram").selectAll("rect").filter(function (rectData) {
+                return rectData.unit_name != d;
+              }).attr("opacity", 1);
+
+              d3.select(this).classed("active", false);
+            } else {
+              svg.selectAll("rect").attr("opacity", 1);
+              d3.select("#histogram").selectAll("rect").attr("opacity", 1);
+              legendItems.selectAll("rect").attr("opacity", 1);
+
+              svg.selectAll("rect").filter(function (rectData) {
+                return rectData.unit_name === d;
+              }).attr("opacity", 1);
+              svg.selectAll("rect").filter(function (rectData) {
+                return rectData.unit_name != d;
+              }).attr("opacity", 0.2);
+              legendItems.selectAll("rect").filter(function (rectData) {
+                return rectData === d;
+              }).attr("opacity", 1);
+              legendItems.selectAll("rect").filter(function (rectData) {
+                return rectData != d;
+              }).attr("opacity", 0.2);
+              d3.select("#histogram").selectAll("rect").filter(function (rectData) {
+                return rectData.unit_name === d;
+              }).attr("opacity", 1);
+              d3.select("#histogram").selectAll("rect").filter(function (rectData) {
+                return rectData.unit_name != d;
+              }).attr("opacity", 0.2);
+              
+              d3.select(this).classed("active", true);
+            }
+          });
+      }
+
+      drawLegend(data);
+
+      var xAxis = svg.append("g")
+        .attr("class", "x-axis")
+        .attr("transform", "translate(0," + (chartAreaY + chartAreaHeight) + ")")
+        .call(d3.axisBottom(xScale)
+          .tickFormat(function (d) {
+            return (d - xMin) + "ns";
+          }));
+
+      svg.append("g")
+        .attr("transform", "translate(" + chartAreaX + ",0)")
+        .call(d3.axisLeft(yScale)
+          .tickFormat(function (d) {
+            return "T" + d;
+          }));
+
+      var brush = d3.brushX()
+        .extent([[chartAreaX, chartAreaY], [chartAreaX + chartAreaWidth, chartAreaY + chartAreaHeight]])
+        .on("end", brushed);
+
+      svg.append("g")
+        .attr("class", "brush")
+        .call(brush);
+
+      var updateHistogram_cnt = 0;
+
+      function updateHistogram(data) {
+        var unitCount = d3.rollups(data, v => v.length, d => d.unit_name);
+        var histogramData = unitCount.map(d => ({ unit_name: d[0], count: d[1] }));
+        var histogramSvg = d3.select("#histogram")
+          .selectAll("svg")
+          .data([histogramData]);
+
+        if (updateHistogram_cnt === 0) {
+          histogramSvg.selectAll("*").remove();
+          histogramSvg.exit().remove();
+
+          histogramSvg = histogramSvg.enter()
+            .append("svg")
+            .attr("width", 400)
+            .attr("height", 300)
+            .attr("transform", "translate(-100, -240)")
+            .merge(histogramSvg);
+
+          var xScaleHistogram = d3.scaleBand()
+            .domain(histogramData.map(d => d.unit_name))
+            .range([50, 350])
+            .padding(0.1);
+
+          var yScaleHistogram = d3.scaleLinear()
+            .domain([0, d3.max(histogramData, d => d.count)])
+            .range([250, 50]);
+
+          var bars = histogramSvg.selectAll("rect")
+            .data(histogramData);
+
+          bars.exit().remove();
+
+          bars.enter()
+            .append("rect")
+            .attr("x", d => xScaleHistogram(d.unit_name))
+            .attr("y", yScaleHistogram(0))
+            .attr("width", xScaleHistogram.bandwidth())
+            .attr("height", 0)
+            .attr("fill", function (d) { return colorScale(d.unit_name); })
+            .merge(bars)
+            .transition().duration(1000)
+            .attr("y", d => yScaleHistogram(d.count))
+            .attr("height", d => 250 - yScaleHistogram(d.count))
+            .attr("fill", function (d) { return colorScale(d.unit_name); });
+
+          histogramSvg.selectAll("g.axis").remove();
+
+          var xAxis = d3.axisBottom(xScaleHistogram)
+            .tickFormat("")
+            .tickSize(0);
+
+          histogramSvg.append("g")
+            .attr("class", "axis")
+            .attr("transform", "translate(0, 250)")
+            .call(xAxis);
+
+          histogramSvg.append("g")
+            .attr("class", "axis")
+            .attr("transform", "translate(50, 0)")
+            .call(d3.axisLeft(yScaleHistogram));
+        } else {
+          var xScaleHistogram = d3.scaleBand()
+            .domain(histogramData.map(d => d.unit_name))
+            .range([50, 350])
+            .padding(0.1);
+
+          var yScaleHistogram = d3.scaleLinear()
+            .domain([0, d3.max(histogramData, d => d.count)])
+            .range([250, 50]);
+
+          var bars = histogramSvg.selectAll("rect")
+            .data(histogramData);
+
+          bars.exit().remove();
+
+          bars.transition().duration(1000)
+            .attr("x", d => xScaleHistogram(d.unit_name))
+            .attr("y", d => yScaleHistogram(d.count))
+            .attr("width", xScaleHistogram.bandwidth())
+            .attr("height", d => 250 - yScaleHistogram(d.count))
+            .attr("fill", function (d) { return colorScale(d.unit_name); });
+
+          histogramSvg.selectAll("g.axis").remove();
+
+          var xAxis = d3.axisBottom(xScaleHistogram)
+            .tickFormat("")
+            .tickSize(0);
+
+          histogramSvg.append("g")
+            .attr("class", "axis")
+            .attr("transform", "translate(0, 250)")
+            .call(xAxis);
+
+          histogramSvg.append("g")
+            .attr("class", "axis")
+            .attr("transform", "translate(50, 0)")
+            .call(d3.axisLeft(yScaleHistogram));
+        }
+
+        updateHistogram_cnt += 1;
+      }
+
+
+      updateHistogram(data);
+
+      function updateDotPlot(data) {
+        var addressCounts = {};
+
+        data.forEach(function (d) {
+          var address = d.address;
+          if (!addressCounts.hasOwnProperty(address)) {
+            addressCounts[address] = 0;
+          }
+          addressCounts[address]++;
+        });
+
+        var dotGraphData = Object.entries(addressCounts).map(function ([address, count]) {
+          return { address: address, count: count };
+        });
+
+        var xScaleDotPlot = d3.scaleBand()
+          .domain(dotGraphData.map(function(d) { return d.address; }))
+          .range([0, chartAreaWidth])
+          .padding(0.2);
+
+        var yScaleDotPlot = d3.scaleLinear()
+          .domain([0, d3.max(dotGraphData, function(d) { return d.count + 3; })])
+          .range([chartAreaHeight, 0]);
+
+        var dots = dotGraphSvg.selectAll("circle")
+          .data(dotGraphData);
+
+        dots.exit().remove();
+        
+        dotcolorScale.domain([0, d3.max(dotGraphData, function(d) { return d.count; })])
+
+        dots.enter()
+          .append("circle")
+          .attr("r", dotGraphRadius)
+          .merge(dots)
+          .transition().duration(1000)
+          .attr("cx", function (d) { return xScaleDotPlot(d.address) + xScaleDotPlot.bandwidth() / 2; })
+          .attr("cy", function (d) { return yScaleDotPlot(d.count); })
+          .attr("fill", function(d) {
+            return dotcolorScale(d.count);
+          });
+      }
+
+      function brushed(event) {
+        if (!event.selection) return;
+        var [x0, x1] = event.selection;
+        var xScaleBrushed = xScale.domain([xScale.invert(x0), xScale.invert(x1)]);
+        xAxis.transition().duration(1000).call(d3.axisBottom(xScaleBrushed)
+          .tickFormat(function (d) {
+            return (d - xMin) + "ns";
+          }));
+
+        svg.selectAll("rect")
+          .transition().duration(1000)
+          .attr("x", function (d) {
+            var x = xScaleBrushed(d.start_time);
+            var clippedX = Math.max(x, chartAreaX);
+            return clippedX;
+          })
+          .attr("width", function (d) {
+            var x = xScaleBrushed(d.start_time);
+            var width = xScaleBrushed(d.end_time) - x;
+            var clippedX = Math.max(x, chartAreaX);
+            var clippedWidth;
+            if (x > chartAreaX) {
+              clippedWidth = Math.min(width, chartAreaX + chartAreaWidth - clippedX);
+            } else {
+              clippedWidth = width - clippedX + x;
+              if (clippedWidth > chartAreaWidth) {
+                clippedWidth = chartAreaWidth;
+              }
+            }
+            return clippedWidth;
+          });
+
+        var brushedData = data.filter(function (d) {
+          var x = xScaleBrushed(d.start_time);
+          var x_end = xScaleBrushed(d.end_time);
+          return (x >= chartAreaX && x <= chartAreaX + chartAreaWidth) || (x_end >= chartAreaX && x_end <= chartAreaX + chartAreaWidth)
+                  || (x <= chartAreaX && x_end >= chartAreaX + chartAreaWidth);
+        });
+
+        updateHistogram(brushedData);
+        svg.select(".legend").remove();
+        drawLegend(brushedData);
+
+        updateDotPlot(brushedData);
+
+
+        svg.select(".brush").call(brush.move, null);
+
+        brush = d3.brushX()
+          .extent([[chartAreaX, chartAreaY], [chartAreaX + chartAreaWidth, chartAreaY + chartAreaHeight]])
+          .on("end", brushed);
+
+        svg.select(".brush").remove();
+        svg.append("g")
+          .attr("class", "brush")
+          .call(brush);
+      }
+
+      function resetChart() {
+        var xScaleBrushed = xScale.domain([xMin, xMax]);
+        xAxis.transition().duration(1000).call(d3.axisBottom(xScaleBrushed)
+          .tickFormat(function (d) {
+            return (d - xMin) + "ns";
+          }));
+
+        svg.selectAll("rect")
+          .transition().duration(1000)
+          .attr("x", function (d) {
+            var x = xScaleBrushed(d.start_time);
+            var clippedX = Math.max(x, chartAreaX);
+            return clippedX;
+          })
+          .attr("width", function (d) {
+            var x = xScaleBrushed(d.start_time);
+            var width = xScaleBrushed(d.end_time) - x;
+            var clippedX = Math.max(x, chartAreaX);
+            var clippedWidth;
+            if (x > chartAreaX) {
+              clippedWidth = Math.min(width, chartAreaX + chartAreaWidth - clippedX);
+            } else {
+              clippedWidth = width - clippedX + x;
+              if (clippedWidth > chartAreaWidth) {
+                clippedWidth = chartAreaWidth;
+              }
+            }
+            return clippedWidth;
+          });
+        
+        updateHistogram_cnt = 0;
+        updateHistogram(data);
+        svg.select(".legend").remove();
+        drawLegend(data);
+        updateDotPlot(data);
+
+        svg.select(".brush").call(brush.move, null);
+
+        brush = d3.brushX()
+          .extent([[chartAreaX, chartAreaY], [chartAreaX + chartAreaWidth, chartAreaY + chartAreaHeight]])
+          .on("end", brushed);
+
+        svg.select(".brush").remove();
+        svg.append("g")
+          .attr("class", "brush")
+          .call(brush);
+        
+        svg.selectAll("rect").attr("opacity", 1);
+      }
+      
+      var resetButton = document.getElementById("resetButton")
+
+      resetButton.addEventListener("click", function() {
+        resetChart();
+      });
+
+    });
+  </script>
+
+</body>
+
+</html>
